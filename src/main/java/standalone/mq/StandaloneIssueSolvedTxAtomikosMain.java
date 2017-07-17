@@ -132,7 +132,7 @@ public class StandaloneIssueSolvedTxAtomikosMain {
 		jmsT.setSessionTransacted(true);
 		jmsT.setSessionAcknowledgeMode(Session.SESSION_TRANSACTED);
 
-		int times = 10;
+		int times = 1;
 		for (int i = 0; i < times; i++) {
 			final int x = i;
 			txTmp.execute(new TransactionCallbackWithoutResult() {
@@ -167,7 +167,6 @@ public class StandaloneIssueSolvedTxAtomikosMain {
 		}
 
 		public void run() {
-			System.out.println(txTmp.getTransactionManager());
 			txTmp.execute(new TransactionCallbackWithoutResult() {
 
 				@Override
