@@ -104,7 +104,7 @@ public class LoadTestMQandDBTxAtomikosMain {
         })).get();
 
         timer.stop();
-
+        forkJoinPool.shutdown();
         System.out.println("++++++++++++TOOK - "+ timer.shortSummary() +"-------for total of " +atomicLong.get());
 
         synchronized (jmsT) {
