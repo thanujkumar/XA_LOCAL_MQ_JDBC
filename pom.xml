@@ -5,7 +5,8 @@
 	<artifactId>ibm.mq.issue</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 
-	<properties>
+
+    <properties>
 		<cr-common-version>1.26.0</cr-common-version>
 		<oracle.driver.version>12.1.0.2.0</oracle.driver.version>
 		<sql.maven.plugin.version>1.5</sql.maven.plugin.version>
@@ -149,4 +150,16 @@
 
 	</dependencies>
 
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<configuration>
+					<source>1.8</source>
+					<target>1.8</target>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
 </project>
