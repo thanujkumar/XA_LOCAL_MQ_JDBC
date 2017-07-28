@@ -1,4 +1,4 @@
-package standalone.mq;
+package standalone.mq.executor;
 
 import ch.qos.logback.classic.Level;
 import com.atomikos.icatch.jta.UserTransactionImp;
@@ -16,13 +16,18 @@ import org.springframework.transaction.support.TransactionCallbackWithoutResult;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StopWatch;
 
-import javax.jms.*;
-import java.util.concurrent.*;
+import javax.jms.JMSException;
+import javax.jms.Session;
+import javax.jms.TextMessage;
+import javax.jms.XAConnectionFactory;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.LongStream;
 
 //https://www.atomikos.com/Documentation/JtaProperties
-public class LoadTestMQandDBTxAtomikosMain {
+public class LoadTestMQandDBTxAtomikosExecutorMain {
 
     static {
         ch.qos.logback.classic.Logger root =
@@ -43,7 +48,7 @@ public class LoadTestMQandDBTxAtomikosMain {
             UserCredentialsConnectionFactoryAdapter userCredentialsConnectionFactoryAdapter) {
         CachingConnectionFactory cachingConnectionFactory = new CachingConnectionFactory();
         // cachingConnectionFactory.setTargetConnectionFactory(userCredentialsConnectionFactoryAdapter);
-        cachingConnectionFactory.setSessionCacheSize(5);
+        cachingConnectionFactory.setSessionCacheSize(16);
         cachingConnectionFactory.setReconnectOnException(true);
         return cachingConnectionFactory;
     }
@@ -51,26 +56,27 @@ public class LoadTestMQandDBTxAtomikosMain {
     static TransactionTemplate txTmp;
 
     public static void main(String[] args) throws Exception {
-        LoadTestMQandDBTxAtomikosMain m = new LoadTestMQandDBTxAtomikosMain();
+        LoadTestMQandDBTxAtomikosExecutorMain m = new LoadTestMQandDBTxAtomikosExecutorMain();
 
         MQConnectionFactory qcf = m.getMQQueueConnectionFactory();
 
         //https://www.atomikos.com/pub/Documentation/Tomcat7Integration35/jta.properties
         AtomikosConnectionFactoryBean atomikosConF = new AtomikosConnectionFactoryBean();
         atomikosConF.setLocalTransactionMode(false);
-        atomikosConF.setPoolSize(30);
+        atomikosConF.setXaConnectionFactoryClassName("com.ibm.mq.jms.MQXAConnectionFactory");
+        atomikosConF.setPoolSize(60);
         atomikosConF.setUniqueResourceName("TEST_XA_MQ");
         atomikosConF.setXaConnectionFactory((XAConnectionFactory) qcf);
 
         CachingConnectionFactory ccf = m.cachingConnectionFactory(null);
-        ccf.setCacheConsumers(false);
+        ccf.setCacheConsumers(true);
         ccf.setCacheProducers(true);
         ccf.setTargetConnectionFactory(atomikosConF);
 
 
         JtaTransactionManager jtaTxMgr = new JtaTransactionManager();
         UserTransactionImp usrTx = new UserTransactionImp();
-        usrTx.setTransactionTimeout(50000);
+        usrTx.setTransactionTimeout(60);
         jtaTxMgr.setUserTransaction(usrTx);
         UserTransactionManager usrTxMgr = new UserTransactionManager();
         jtaTxMgr.setTransactionManager(usrTxMgr);
@@ -78,7 +84,7 @@ public class LoadTestMQandDBTxAtomikosMain {
         txTmp = new TransactionTemplate(jtaTxMgr);
 
         JmsTemplate jmsT = new JmsTemplate(ccf);
-        jmsT.setReceiveTimeout(5000);
+        jmsT.setReceiveTimeout(60*1000);
         jmsT.setSessionTransacted(true);
         jmsT.setSessionAcknowledgeMode(Session.SESSION_TRANSACTED);
 
@@ -86,33 +92,41 @@ public class LoadTestMQandDBTxAtomikosMain {
         StopWatch timer = new StopWatch();
         timer.start();
 
-        ForkJoinPool forkJoinPool = new ForkJoinPool(Runtime.getRuntime().availableProcessors());
-        forkJoinPool.submit(() -> LongStream.range(0, 100000).parallel().forEach(index -> {
+        ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() );
 
-            txTmp.execute(new TransactionCallbackWithoutResult() {
+        ForkJoinPool forkJoinPool = new ForkJoinPool();
+        forkJoinPool.submit(() -> {
+            LongStream.range(0,10000).parallel().forEach(index -> {
+                System.out.println(Thread.currentThread());
+                executorService.execute(()-> txTmp.execute(new TransactionCallbackWithoutResult() {
 
-                @Override
-                public void doInTransactionWithoutResult(TransactionStatus status) {
-                    jmsT.send("TESTQUEUE1", (session) -> {
-                        TextMessage msg = session.createTextMessage();
-                        msg.setText("This is message id - "+index +" by thread "+ Thread.currentThread());
-                        return msg;
-                    });
-                    //TODO - when exception occurs no remaining tasks get executed
-                    if (index % 2 == 0) {
-                        throw new RuntimeException("Rollback - "+index);
+                    @Override
+                    public void doInTransactionWithoutResult(TransactionStatus status) {
+                        System.out.println("----------->"+Thread.currentThread());
+                        jmsT.send("TESTQUEUE0", (session) -> {
+                            TextMessage msg = session.createTextMessage();
+                            msg.setText("This is message id - "+index+"- by thread "+ Thread.currentThread());
+                            return msg;
+                        });
+                        atomicLong.incrementAndGet();
+//                        if (index % 2 == 0) {
+//                            throw new RuntimeException("Rollback -> "+ index);
+//                        }
                     }
-                }
+                }));
             });
-            atomicLong.incrementAndGet();
-        })).get();
+        }).get();
 
-        timer.stop();
-        forkJoinPool.shutdown();
-        System.out.println("++++++++++++TOOK - "+ timer.shortSummary() +"-------for total of " +atomicLong.get());
+        executorService.shutdown();
 
-//        synchronized (jmsT) {
-//           // jmsT.wait();
-//        }
+        Runtime.getRuntime().addShutdownHook(new Thread() {
+            @Override
+            public void run() {
+                super.run();
+                timer.stop();
+                System.out.println("++++++++++++TOOK - "+ timer.shortSummary() +"-------for total of " +atomicLong.get());
+            }
+        });
+
     }
 }
