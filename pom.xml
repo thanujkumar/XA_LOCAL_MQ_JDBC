@@ -19,6 +19,9 @@
 		<spring.jms.version>4.2.5.RELEASE</spring.jms.version>
 		<quartz.scheduler.version>2.2.1</quartz.scheduler.version>
 		<atomikos.version>4.0.4</atomikos.version>
+		<oracle.ojdbc.version>12.1.0.2.0</oracle.ojdbc.version>
+		<oracle.ucp.version>12.1.0.2.0</oracle.ucp.version>
+		<oracle.ons.version>12.1.0.2.0</oracle.ons.version>
 	</properties>
 
 	<dependencies>
@@ -64,6 +67,30 @@
 			<artifactId>transactions-jms</artifactId>
 			<version>${atomikos.version}</version>
 		</dependency>
+		<dependency>
+			<groupId>com.atomikos</groupId>
+			<artifactId>transactions-jdbc</artifactId>
+			<version>${atomikos.version}</version>
+		</dependency>
+
+		<!-- oracle -->
+		<dependency>
+			<groupId>com.oracle</groupId>
+			<artifactId>ojdbc7</artifactId>
+			<version>${oracle.ojdbc.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.oracle.ucp</groupId>
+			<artifactId>ucp</artifactId>
+			<version>${oracle.ucp.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.oracle</groupId>
+			<artifactId>ons</artifactId>
+			<version>${oracle.ons.version}</version>
+			<scope>runtime</scope>
+		</dependency>
+
 		<!-- javax.transaction/jta -->
 		<dependency>
 		    <groupId>javax.transaction</groupId>
@@ -90,11 +117,20 @@
 			<artifactId>disthub2.dhbcore</artifactId>
 			<version>${ibm.mq.dhbcore}</version>
 		</dependency>
+
+		<!--Spring framework -->
 		<dependency>
 			<groupId>org.springframework</groupId>
 			<artifactId>spring-jms</artifactId>
 			<version>${spring.jms.version}</version>
 		</dependency>
+		<dependency>
+			<groupId>org.springframework</groupId>
+			<artifactId>spring-jdbc</artifactId>
+			<version>${spring.jms.version}</version>
+		</dependency>
+
+		<!-- JMS -->
 		<dependency>
 			<groupId>javax.jms</groupId>
 			<artifactId>javax.jms-api</artifactId>

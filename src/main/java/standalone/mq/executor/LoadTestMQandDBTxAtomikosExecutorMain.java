@@ -3,10 +3,15 @@ package standalone.mq.executor;
 import ch.qos.logback.classic.Level;
 import com.atomikos.icatch.jta.UserTransactionImp;
 import com.atomikos.icatch.jta.UserTransactionManager;
+import com.atomikos.jdbc.AtomikosDataSourceBean;
 import com.atomikos.jms.AtomikosConnectionFactoryBean;
 import com.ibm.mq.jms.MQConnectionFactory;
 import com.ibm.mq.jms.MQXAConnectionFactory;
 import com.ibm.msg.client.wmq.WMQConstants;
+import oracle.ucp.jdbc.PoolDataSourceFactory;
+import oracle.ucp.jdbc.PoolXADataSource;
+import oracle.ucp.jdbc.PoolXADataSourceImpl;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jms.connection.CachingConnectionFactory;
 import org.springframework.jms.connection.UserCredentialsConnectionFactoryAdapter;
 import org.springframework.jms.core.JmsTemplate;
@@ -20,6 +25,11 @@ import javax.jms.JMSException;
 import javax.jms.Session;
 import javax.jms.TextMessage;
 import javax.jms.XAConnectionFactory;
+import javax.sql.DataSource;
+import javax.transaction.SystemException;
+import javax.xml.crypto.Data;
+import java.sql.SQLException;
+import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
@@ -42,6 +52,28 @@ public class LoadTestMQandDBTxAtomikosExecutorMain {
         mqQCF.setPort(1414);
         mqQCF.setQueueManager("DEVMQ");
         return mqQCF;
+    }
+
+    public DataSource getOracleDS () throws SQLException {
+//        PoolXADataSource pooledXAUCPDS = PoolDataSourceFactory.getPoolXADataSource();//new PoolXADataSourceImpl(); //
+//        pooledXAUCPDS.setURL("jdbc:oracle:thin:@//localhost:1521/orcl");
+//        pooledXAUCPDS.setUser("APPDATA");
+//        pooledXAUCPDS.setPassword("data");
+//        pooledXAUCPDS.setConnectionFactoryClassName("oracle.jdbc.xa.client.OracleXADataSource");
+//        pooledXAUCPDS.setInitialPoolSize(Runtime.getRuntime().availableProcessors());
+//        pooledXAUCPDS.setMaxPoolSize(Runtime.getRuntime().availableProcessors() * 2);
+
+        AtomikosDataSourceBean ds = new AtomikosDataSourceBean();
+        ds.setXaDataSourceClassName("oracle.jdbc.xa.client.OracleXADataSource");
+        ds.setUniqueResourceName("Oracle");
+        ds.setMinPoolSize(Runtime.getRuntime().availableProcessors());
+        ds.setMaxPoolSize(Runtime.getRuntime().availableProcessors() * 2);
+        Properties p = new Properties();
+        p.setProperty("URL","jdbc:oracle:thin:@//localhost:1521/orcl");
+        p.setProperty("user","APPDATA");
+        p.setProperty("password", "app");
+        ds.setXaProperties(p);
+        return ds;
     }
 
     public CachingConnectionFactory cachingConnectionFactory(
@@ -88,6 +120,10 @@ public class LoadTestMQandDBTxAtomikosExecutorMain {
         jmsT.setSessionTransacted(true);
         jmsT.setSessionAcknowledgeMode(Session.SESSION_TRANSACTED);
 
+        DataSource ds = m.getOracleDS();
+        JdbcTemplate jdbcT = new JdbcTemplate(ds);
+
+
         AtomicLong atomicLong = new AtomicLong();
         StopWatch timer = new StopWatch();
         timer.start();
@@ -96,21 +132,29 @@ public class LoadTestMQandDBTxAtomikosExecutorMain {
 
         ForkJoinPool forkJoinPool = new ForkJoinPool();
         forkJoinPool.submit(() -> {
-            LongStream.range(0,10000).parallel().forEach(index -> {
+            LongStream.range(0,1000).parallel().forEach(index -> {
                 System.out.println(Thread.currentThread());
                 executorService.execute(()-> txTmp.execute(new TransactionCallbackWithoutResult() {
 
                     @Override
                     public void doInTransactionWithoutResult(TransactionStatus status) {
                         System.out.println("----------->"+Thread.currentThread());
+                        String text = "This is message id - "+index+"- by thread "+ Thread.currentThread();
                         jmsT.send("TESTQUEUE0", (session) -> {
                             TextMessage msg = session.createTextMessage();
-                            msg.setText("This is message id - "+index+"- by thread "+ Thread.currentThread());
+                            msg.setText(text);
                             return msg;
                         });
+                        //database
+                        jdbcT.update("insert into A_TX_TEST (MSG) values('"+text+"')");
                         atomicLong.incrementAndGet();
 //                        if (index % 2 == 0) {
-//                            throw new RuntimeException("Rollback -> "+ index);
+//                            try {
+//                                status.setRollbackOnly();
+//                            } catch (Exception e) {
+//                                e.printStackTrace();
+//                            }
+//                            //throw new RuntimeException("Rollback -> "+ index);
 //                        }
                     }
                 }));
