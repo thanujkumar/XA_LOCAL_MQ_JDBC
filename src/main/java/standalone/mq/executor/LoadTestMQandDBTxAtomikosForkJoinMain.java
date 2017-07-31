@@ -8,9 +8,6 @@ import com.atomikos.jms.AtomikosConnectionFactoryBean;
 import com.ibm.mq.jms.MQConnectionFactory;
 import com.ibm.mq.jms.MQXAConnectionFactory;
 import com.ibm.msg.client.wmq.WMQConstants;
-import oracle.ucp.jdbc.PoolDataSourceFactory;
-import oracle.ucp.jdbc.PoolXADataSource;
-import oracle.ucp.jdbc.PoolXADataSourceImpl;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jms.connection.CachingConnectionFactory;
 import org.springframework.jms.connection.UserCredentialsConnectionFactoryAdapter;
@@ -26,8 +23,7 @@ import javax.jms.Session;
 import javax.jms.TextMessage;
 import javax.jms.XAConnectionFactory;
 import javax.sql.DataSource;
-import javax.transaction.SystemException;
-import javax.xml.crypto.Data;
+import javax.xml.soap.Text;
 import java.sql.SQLException;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -37,7 +33,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.LongStream;
 
 //https://www.atomikos.com/Documentation/JtaProperties
-public class LoadTestMQandDBTxAtomikosExecutorMain {
+public class LoadTestMQandDBTxAtomikosForkJoinMain {
 
     static {
         ch.qos.logback.classic.Logger root =
@@ -68,6 +64,7 @@ public class LoadTestMQandDBTxAtomikosExecutorMain {
         ds.setUniqueResourceName("Oracle");
         ds.setMinPoolSize(Runtime.getRuntime().availableProcessors());
         ds.setMaxPoolSize(Runtime.getRuntime().availableProcessors() * 2);
+
         Properties p = new Properties();
         p.setProperty("URL","jdbc:oracle:thin:@//localhost:1521/orcl");
         p.setProperty("user","APPDATA");
@@ -88,7 +85,7 @@ public class LoadTestMQandDBTxAtomikosExecutorMain {
     static TransactionTemplate txTmp;
 
     public static void main(String[] args) throws Exception {
-        LoadTestMQandDBTxAtomikosExecutorMain m = new LoadTestMQandDBTxAtomikosExecutorMain();
+        LoadTestMQandDBTxAtomikosForkJoinMain m = new LoadTestMQandDBTxAtomikosForkJoinMain();
 
         MQConnectionFactory qcf = m.getMQQueueConnectionFactory();
 
@@ -128,40 +125,66 @@ public class LoadTestMQandDBTxAtomikosExecutorMain {
         StopWatch timer = new StopWatch();
         timer.start();
 
-        ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() );
+        ForkJoinPool forkJoinPool = new ForkJoinPool(32);
 
-        ForkJoinPool forkJoinPool = new ForkJoinPool();
-        forkJoinPool.submit(() -> {
-            LongStream.range(0,10).parallel().forEach(index -> {
-                System.out.println(Thread.currentThread());
-                executorService.execute(()-> txTmp.execute(new TransactionCallbackWithoutResult() {
+        forkJoinPool.submit(() -> LongStream.range(0, 10000).parallel().forEach(index -> {
+              txTmp.execute(status -> {
+                  String text = "This is message id - "+index+"- by thread "+ Thread.currentThread();
+                  jmsT.send("TESTQUEUE1", (session) -> {
+                      TextMessage msg = session.createTextMessage();
+                      msg.setText(text);
+                      return msg;
+                  });
+                  //database
+                  jdbcT.update("insert into A_TX_TEST (MSG) values('"+text+"')");
+                  atomicLong.incrementAndGet();
+                  return null;
+              });
+        })).get();
 
-                    @Override
-                    public void doInTransactionWithoutResult(TransactionStatus status) {
-                        System.out.println("----------->"+Thread.currentThread());
-                        String text = "This is message id - "+index+"- by thread "+ Thread.currentThread();
-                        jmsT.send("TESTQUEUE0", (session) -> {
-                            TextMessage msg = session.createTextMessage();
-                            msg.setText(text);
-                            return msg;
-                        });
-                        //database
-                        jdbcT.update("insert into A_TX_TEST (MSG) values('"+text+"')");
-                        atomicLong.incrementAndGet();
-//                        if (index % 2 == 0) {
-//                            try {
-//                                status.setRollbackOnly();
-//                            } catch (Exception e) {
-//                                e.printStackTrace();
-//                            }
-//                            //throw new RuntimeException("Rollback -> "+ index);
-//                        }
-                    }
-                }));
-            });
-        }).get();
+//        forkJoinPool.submit(() -> LongStream.range(0,1000).parallel().forEach(index -> {
+//              System.out.println(Thread.currentThread());
+//              txTmp.execute(new TransactionCallbackWithoutResult() {
+//
+//                @Override
+//                public void doInTransactionWithoutResult(TransactionStatus status) {
+//                    System.out.println("----------->"+Thread.currentThread());
+//                    String text = "This is message id - "+index+"- by thread "+ Thread.currentThread();
+//                    jmsT.send("TESTQUEUE0", (session) -> {
+//                        TextMessage msg = session.createTextMessage();
+//                        msg.setText(text);
+//                        return msg;
+//                    });
+//                    //database
+//                    jdbcT.update("insert into A_TX_TEST (MSG) values('"+text+"')");
+//                    atomicLong.incrementAndGet();
+//                }
+//            });
+//        })).get();
 
-        executorService.shutdown();
+        //TODO below no control on threadpool size, so using explict joinpool above
+//        LongStream.range(0,10000).parallel().forEach(index -> {
+//            System.out.println("**** ->"+Thread.currentThread());
+//            txTmp.execute(new TransactionCallbackWithoutResult() {
+//                @Override
+//                protected void doInTransactionWithoutResult(TransactionStatus status) {
+//                    String text = "This is message id  by thread "+ Thread.currentThread();
+//                    jmsT.send("TESTQUEUE1"/*"TESTQUEUE1"*/, (session) -> {
+//                        TextMessage msg = session.createTextMessage();
+//                        msg.setText(text);
+//                        System.out.println("++++ ->"+Thread.currentThread());
+//                        return msg;
+//                    });
+//
+//                    jdbcT.update("insert into A_TX_TEST (MSG) values('"+text+"')");
+//
+//                    atomicLong.incrementAndGet();
+//                }
+//            });
+//
+//        });
+
+        forkJoinPool.shutdown();
 
         Runtime.getRuntime().addShutdownHook(new Thread() {
             @Override
